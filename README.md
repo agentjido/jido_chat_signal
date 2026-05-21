@@ -2,6 +2,16 @@
 
 `jido_chat_signal` adapts Signal messages to `Jido.Chat.Adapter` through [`signal-cli`](https://github.com/AsamK/signal-cli).
 
+## Installation
+
+```elixir
+def deps do
+  [
+    {:jido_chat_signal, "~> 0.1"}
+  ]
+end
+```
+
 ## signal-cli setup
 
 Install and link/register `signal-cli`. For JSON-RPC send-only mode, start the daemon:

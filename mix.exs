@@ -17,7 +17,9 @@ defmodule Jido.Chat.Signal.MixProject do
       name: "Jido Chat Signal",
       description: @description,
       source_url: @source_url,
-      homepage_url: @source_url
+      homepage_url: @source_url,
+      package: package(),
+      docs: docs()
     ]
   end
 
@@ -30,12 +32,13 @@ defmodule Jido.Chat.Signal.MixProject do
 
   defp deps do
     [
-      {:jido_chat, path: "../jido_chat"},
+      {:jido_chat, "~> 1.0"},
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:dotenvy, "~> 1.1", only: [:test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:git_ops, "~> 2.9", only: :dev, runtime: false}
     ]
   end
 
@@ -47,6 +50,32 @@ defmodule Jido.Chat.Signal.MixProject do
         "compile --warnings-as-errors",
         "credo --strict",
         "test"
+      ]
+    ]
+  end
+
+  defp package do
+    [
+      files: ["lib", "mix.exs", "README.md", "CHANGELOG.md", "usage-rules.md"],
+      maintainers: ["Mike Hostetler"],
+      licenses: ["Apache-2.0"],
+      links: %{
+        "Changelog" => "https://github.com/agentjido/jido_chat_signal/blob/main/CHANGELOG.md",
+        "Documentation" => "https://hexdocs.pm/jido_chat_signal",
+        "GitHub" => @source_url,
+        "Website" => "https://jido.run"
+      }
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      source_ref: "v#{@version}",
+      source_url: @source_url,
+      extras: [
+        "README.md",
+        "usage-rules.md"
       ]
     ]
   end
