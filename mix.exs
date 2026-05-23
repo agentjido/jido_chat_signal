@@ -1,7 +1,7 @@
 defmodule Jido.Chat.Signal.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "1.0.0"
   @source_url "https://github.com/agentjido/jido_chat_signal"
   @description "Signal adapter package for Jido.Chat using signal-cli"
 
@@ -61,6 +61,7 @@ defmodule Jido.Chat.Signal.MixProject do
       licenses: ["Apache-2.0"],
       links: %{
         "Changelog" => "https://github.com/agentjido/jido_chat_signal/blob/main/CHANGELOG.md",
+        "Discord" => "https://jido.run/discord",
         "Documentation" => "https://hexdocs.pm/jido_chat_signal",
         "GitHub" => @source_url,
         "Website" => "https://jido.run"
