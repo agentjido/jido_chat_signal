@@ -20,7 +20,8 @@ defmodule Jido.Chat.Signal.AdapterTest do
     assert {:ok, response} =
              Adapter.send_message("+15555550100", "hello", transport: FakeTransport)
 
-    assert response.external_message_id == "1776000000"
+    assert response.external_message_id == 1_776_000_000
+    assert response.message_id == "1776000000"
   end
 
   test "declares only delivery capabilities it can satisfy" do
@@ -49,7 +50,8 @@ defmodule Jido.Chat.Signal.AdapterTest do
                test_pid: self()
              )
 
-    assert response.external_message_id == "1776000000"
+    assert response.external_message_id == 1_776_000_000
+    assert response.message_id == "1776000000"
     assert [%{path: "/tmp/report.txt"}] = response.metadata.attachments
 
     assert_received {:signal_send, "+15555550100", "file caption", opts}
