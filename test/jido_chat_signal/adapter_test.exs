@@ -70,8 +70,18 @@ defmodule Jido.Chat.Signal.AdapterTest do
           "quote" => %{"id" => 1_775_999_999, "author" => "+15555550101", "text" => "parent"},
           "attachments" => [
             %{"contentType" => "image/png", "filename" => "image.png", "size" => 123},
-            %{"filename" => "fallback.png", "size" => 456},
-            %{"content_type" => " ", "fileName" => "archive.unknown", "size" => 789}
+            %{"filename" => " ", "fileName" => "fallback.png", "size" => 456},
+            %{"content_type" => " ", "fileName" => "archive.unknown", "size" => 789},
+            %{
+              "contentType" => " application/pdf; charset=binary ",
+              "filename" => "misleading.png",
+              "size" => 1_000
+            },
+            %{
+              "contentType" => "not-a-mime",
+              "filename" => "invalid-fallback.png",
+              "size" => 1_001
+            }
           ]
         }
       }
@@ -82,7 +92,7 @@ defmodule Jido.Chat.Signal.AdapterTest do
     assert incoming.external_reply_to_id == 1_775_999_999
     assert incoming.text == "hello"
 
-    assert [explicit, fallback, unknown] = incoming.media
+    assert [explicit, fallback, unknown, misleading, invalid_fallback] = incoming.media
 
     assert %Jido.Chat.Media{
              kind: :image,
@@ -104,6 +114,18 @@ defmodule Jido.Chat.Signal.AdapterTest do
              media_type: nil,
              size_bytes: 789
            } = unknown
+
+    assert %Jido.Chat.Media{
+             kind: :file,
+             filename: "misleading.png",
+             media_type: "application/pdf; charset=binary"
+           } = misleading
+
+    assert %Jido.Chat.Media{
+             kind: :image,
+             filename: "invalid-fallback.png",
+             media_type: nil
+           } = invalid_fallback
   end
 
   test "rejects non-message signal envelopes instead of creating blank messages" do
