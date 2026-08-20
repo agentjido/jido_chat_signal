@@ -69,7 +69,9 @@ defmodule Jido.Chat.Signal.AdapterTest do
           "message" => "hello",
           "quote" => %{"id" => 1_775_999_999, "author" => "+15555550101", "text" => "parent"},
           "attachments" => [
-            %{"contentType" => "image/png", "filename" => "image.png", "size" => 123}
+            %{"contentType" => "image/png", "filename" => "image.png", "size" => 123},
+            %{"filename" => "fallback.png", "size" => 456},
+            %{"content_type" => " ", "fileName" => "archive.unknown", "size" => 789}
           ]
         }
       }
@@ -80,8 +82,28 @@ defmodule Jido.Chat.Signal.AdapterTest do
     assert incoming.external_reply_to_id == 1_775_999_999
     assert incoming.text == "hello"
 
-    assert [%Jido.Chat.Media{kind: :image, filename: "image.png", size_bytes: 123}] =
-             incoming.media
+    assert [explicit, fallback, unknown] = incoming.media
+
+    assert %Jido.Chat.Media{
+             kind: :image,
+             filename: "image.png",
+             media_type: "image/png",
+             size_bytes: 123
+           } = explicit
+
+    assert %Jido.Chat.Media{
+             kind: :image,
+             filename: "fallback.png",
+             media_type: nil,
+             size_bytes: 456
+           } = fallback
+
+    assert %Jido.Chat.Media{
+             kind: :file,
+             filename: "archive.unknown",
+             media_type: nil,
+             size_bytes: 789
+           } = unknown
   end
 
   test "rejects non-message signal envelopes instead of creating blank messages" do

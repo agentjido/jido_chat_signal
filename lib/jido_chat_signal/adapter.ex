@@ -200,7 +200,10 @@ defmodule Jido.Chat.Signal.Adapter do
   defp media_from_attachments(attachments) when is_list(attachments) do
     Enum.map(attachments, fn attachment ->
       Media.new(%{
-        media_type: attachment["contentType"] || attachment["content_type"],
+        media_type:
+          attachment
+          |> attachment_content_type()
+          |> non_empty_string(),
         filename: attachment["filename"] || attachment["fileName"],
         size_bytes: attachment["size"],
         metadata: attachment
@@ -209,6 +212,19 @@ defmodule Jido.Chat.Signal.Adapter do
   end
 
   defp media_from_attachments(_attachments), do: []
+
+  defp attachment_content_type(attachment) do
+    attachment["contentType"] || attachment["content_type"]
+  end
+
+  defp non_empty_string(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp non_empty_string(_value), do: nil
 
   defp transport(opts), do: Keyword.get(opts, :transport, JsonRpcClient)
 
