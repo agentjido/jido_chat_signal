@@ -24,8 +24,16 @@ defmodule Jido.Chat.Signal.AdapterTest do
     assert response.message_id == "1776000000"
   end
 
-  test "declares only delivery capabilities it can satisfy" do
+  test "declares native delivery and core fallback capabilities" do
     assert :ok = ChatAdapter.validate_capabilities(Jido.Chat.Signal.Adapter)
+
+    capabilities = ChatAdapter.capabilities(Jido.Chat.Signal.Adapter)
+
+    assert Map.take(capabilities, [:card_charts, :card_tables, :link_action_ids]) == %{
+             card_charts: :fallback,
+             card_tables: :fallback,
+             link_action_ids: :fallback
+           }
 
     assert Capabilities.channel_capabilities(Jido.Chat.Signal.Adapter) == [
              :text,
@@ -34,7 +42,10 @@ defmodule Jido.Chat.Signal.AdapterTest do
              :video,
              :file,
              :multi_file,
-             :streaming
+             :streaming,
+             :card_charts,
+             :card_tables,
+             :link_action_ids
            ]
   end
 
@@ -73,7 +84,7 @@ defmodule Jido.Chat.Signal.AdapterTest do
             %{"filename" => " ", "fileName" => "fallback.png", "size" => 456},
             %{"content_type" => " ", "fileName" => "archive.unknown", "size" => 789},
             %{
-              "contentType" => " application/pdf; charset=binary ",
+              "contentType" => " Application/PDF; Charset=binary ",
               "filename" => "misleading.png",
               "size" => 1_000
             },
@@ -118,7 +129,7 @@ defmodule Jido.Chat.Signal.AdapterTest do
     assert %Jido.Chat.Media{
              kind: :file,
              filename: "misleading.png",
-             media_type: "application/pdf; charset=binary"
+             media_type: "application/pdf"
            } = misleading
 
     assert %Jido.Chat.Media{
