@@ -34,7 +34,10 @@ defmodule Jido.Chat.Signal.AdapterTest do
              :video,
              :file,
              :multi_file,
-             :streaming
+             :streaming,
+             :card_charts,
+             :card_tables,
+             :link_action_ids
            ]
   end
 
@@ -118,7 +121,7 @@ defmodule Jido.Chat.Signal.AdapterTest do
     assert %Jido.Chat.Media{
              kind: :file,
              filename: "misleading.png",
-             media_type: "application/pdf; charset=binary"
+             media_type: "application/pdf"
            } = misleading
 
     assert %Jido.Chat.Media{

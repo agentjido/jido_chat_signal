@@ -2,36 +2,9 @@ defmodule Jido.Chat.Signal.Adapter do
   @moduledoc "Signal `Jido.Chat.Adapter` implementation backed by `signal-cli`."
   use Jido.Chat.Adapter
 
-  alias Jido.Chat.{Author, FileUpload, Incoming, Media, PostPayload, Response}
+  alias Jido.Chat.{Author, FileUpload, Incoming, Media, MediaType, PostPayload, Response}
   alias Jido.Chat.Signal.{PollingWorker, Transport.CliClient, Transport.JsonRpcClient}
 
-  @media_type_pattern ~r/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/
-  @media_kind_extensions %{
-    ".aac" => :audio,
-    ".avi" => :video,
-    ".avif" => :image,
-    ".bmp" => :image,
-    ".flac" => :audio,
-    ".gif" => :image,
-    ".heic" => :image,
-    ".heif" => :image,
-    ".jpeg" => :image,
-    ".jpg" => :image,
-    ".m4a" => :audio,
-    ".m4v" => :video,
-    ".mkv" => :video,
-    ".mov" => :video,
-    ".mp3" => :audio,
-    ".mp4" => :video,
-    ".ogg" => :audio,
-    ".png" => :image,
-    ".svg" => :image,
-    ".tif" => :image,
-    ".tiff" => :image,
-    ".wav" => :audio,
-    ".webm" => :video,
-    ".webp" => :image
-  }
   @no_listener_modes MapSet.new(["none", "manual"])
   @polling_modes MapSet.new([
                    "polling",
@@ -244,52 +217,12 @@ defmodule Jido.Chat.Signal.Adapter do
   defp attachment_content_type(attachment) do
     attachment
     |> get_non_blank(["contentType", "content_type"])
-    |> normalize_media_type()
+    |> MediaType.normalize()
   end
 
   defp attachment_filename(attachment), do: get_non_blank(attachment, ["filename", "fileName"])
 
-  defp attachment_kind(media_type, filename) do
-    media_kind_from_type(media_type) || media_kind_from_reference(filename) || :file
-  end
-
-  defp media_kind_from_type(media_type) when is_binary(media_type) do
-    case canonical_media_type(media_type) do
-      "image/" <> _rest -> :image
-      "audio/" <> _rest -> :audio
-      "video/" <> _rest -> :video
-      _other -> :file
-    end
-  end
-
-  defp media_kind_from_type(_media_type), do: nil
-
-  defp media_kind_from_reference(reference) when is_binary(reference) do
-    reference
-    |> Path.extname()
-    |> String.downcase()
-    |> then(&Map.get(@media_kind_extensions, &1))
-  end
-
-  defp media_kind_from_reference(_reference), do: nil
-
-  defp normalize_media_type(value) when is_binary(value) do
-    trimmed = String.trim(value)
-
-    if Regex.match?(@media_type_pattern, canonical_media_type(trimmed)),
-      do: trimmed,
-      else: nil
-  end
-
-  defp normalize_media_type(_value), do: nil
-
-  defp canonical_media_type(value) do
-    value
-    |> String.split(";", parts: 2)
-    |> hd()
-    |> String.trim()
-    |> String.downcase()
-  end
+  defp attachment_kind(media_type, filename), do: MediaType.kind(media_type, filename)
 
   defp get_non_blank(map, keys) do
     Enum.find_value(keys, &non_blank_map_value(map, &1))
