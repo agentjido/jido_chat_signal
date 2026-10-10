@@ -23,5 +23,5 @@ jobs:
     with:
       credo_command: mix credo --strict
       dialyzer_command: ":"
-      docs_command: mix docs -f html
+      docs_command: mix docs -f html -f markdown
       test_command: mix test
