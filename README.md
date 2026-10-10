@@ -100,3 +100,7 @@ runtime call `Jido.Chat.Signal.Adapter.transform_incoming/1`.
 `signal-cli daemon --http` also exposes `GET /api/v1/events` as a Server-Sent
 Events stream. The RPC poller is simpler to supervise and keeps receive ownership
 inside the bridge runtime.
+
+## Local Documentation
+
+Run `mix docs` to generate HTML and Markdown documentation in `doc/`, including Markdown pages and `llms.txt`.
