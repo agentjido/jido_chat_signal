@@ -150,19 +150,9 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClient do
     end
   end
 
-  defp normalize_receive_messages(messages) when is_list(messages) do
-    Enum.flat_map(messages, &normalize_receive_messages/1)
-  end
-
-  defp normalize_receive_messages(%{"envelope" => _envelope} = message), do: [message]
-
-  defp normalize_receive_messages(
-         %{"params" => %{"result" => %{"envelope" => _envelope}}} =
-           message
-       ),
-       do: [message]
-
-  defp normalize_receive_messages(_message), do: []
+  defp normalize_receive_messages(messages) when is_list(messages), do: messages
+  defp normalize_receive_messages(nil), do: []
+  defp normalize_receive_messages(message), do: [message]
 
   defp normalize_number(value) when is_number(value), do: value
 

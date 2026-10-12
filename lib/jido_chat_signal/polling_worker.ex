@@ -3,7 +3,7 @@ defmodule Jido.Chat.Signal.PollingWorker do
   Bridge-ingress polling worker for Signal receive transports.
 
   The worker drains pending Signal envelopes through a receiver module and emits
-  raw payloads via `sink_mfa` so host runtimes can route them through ingress.
+  complete typed deliveries via `sink_mfa` so host runtimes can route them through ingress.
   """
 
   use GenServer
@@ -14,6 +14,7 @@ defmodule Jido.Chat.Signal.PollingWorker do
 
   @type state :: %{
           bridge_id: String.t(),
+          binding: Jido.Chat.Binding.t(),
           sink_mfa: sink_mfa(),
           sink_opts: keyword(),
           receiver: module(),
@@ -36,6 +37,7 @@ defmodule Jido.Chat.Signal.PollingWorker do
 
     state = %{
       bridge_id: bridge_id,
+      binding: Keyword.fetch!(opts, :binding),
       sink_mfa: sink_mfa,
       sink_opts: Keyword.get(opts, :sink_opts, []),
       receiver: Keyword.get(opts, :receiver, CliClient),
@@ -84,20 +86,20 @@ defmodule Jido.Chat.Signal.PollingWorker do
     end
   end
 
-  defp emit_message(state, message) when is_map(message) do
-    case invoke_sink(state.sink_mfa, message, state.sink_opts) do
-      {:ok, _result} -> :ok
-      :ok -> :ok
-      {:error, _reason} = error -> error
-      other -> {:error, {:invalid_sink_result, other}}
+  defp emit_message(state, message) do
+    with {:ok, delivery} <- Jido.Chat.normalize_event(state.binding, message) do
+      case invoke_sink(state.sink_mfa, delivery, state.sink_opts) do
+        {:ok, _result} -> :ok
+        :ok -> :ok
+        {:error, _reason} = error -> error
+        other -> {:error, {:invalid_sink_result, other}}
+      end
     end
   end
 
-  defp emit_message(_state, _message), do: {:error, :invalid_message_payload}
-
   defp invoke_sink({module, function, base_args}, payload, opts)
        when is_atom(module) and is_atom(function) and is_list(base_args) and is_list(opts) do
-    apply(module, function, base_args ++ [payload, Keyword.put(opts, :mode, :payload)])
+    apply(module, function, base_args ++ [payload, opts])
   end
 
   defp invoke_sink(_sink_mfa, _payload, _opts), do: {:error, :invalid_sink_mfa}

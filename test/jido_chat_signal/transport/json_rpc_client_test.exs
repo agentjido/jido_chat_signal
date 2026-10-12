@@ -4,6 +4,17 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
   alias Jido.Chat.FileUpload
   alias Jido.Chat.Signal.Transport.JsonRpcClient
 
+  defmodule StubAdapter do
+    def run(request) do
+      Process.get({Jido.Chat.Signal.Transport.JsonRpcClientTest, :adapter}).(request)
+    end
+  end
+
+  defp request_options(adapter) do
+    Process.put({__MODULE__, :adapter}, adapter)
+    [adapter: StubAdapter]
+  end
+
   test "polls receive through the JSON-RPC daemon" do
     test_pid = self()
 
@@ -35,7 +46,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
                account: "+15555550101",
                receive_timeout_s: 2,
                max_messages: 5,
-               req_options: [adapter: adapter]
+               req_options: request_options(adapter)
              )
 
     assert %{"envelope" => %{"dataMessage" => %{"message" => "hello"}}} = payload
@@ -62,14 +73,14 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
                endpoint: "http://signal.test/api/v1/rpc",
                receive_timeout_s: 30,
                http_receive_timeout_ms: 2_000,
-               req_options: [adapter: adapter]
+               req_options: request_options(adapter)
              )
 
     assert_received {:rpc_options, options}
     assert options.receive_timeout == 2_000
   end
 
-  test "normalizes empty or non-envelope receive results to an empty list" do
+  test "keeps all receive items for complete adapter normalization" do
     adapter = fn request ->
       body = Jason.decode!(request.body)
 
@@ -83,10 +94,10 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
       {request, %{response | status: 200}}
     end
 
-    assert {:ok, []} =
+    assert {:ok, [%{"receiptMessage" => %{}}, nil]} =
              JsonRpcClient.receive_messages(
                endpoint: "http://signal.test/api/v1/rpc",
-               req_options: [adapter: adapter]
+               req_options: request_options(adapter)
              )
   end
 
@@ -108,7 +119,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
             {:signal_rpc_error, 200, %{"code" => -32_000, "message" => "already receiving"}}} =
              JsonRpcClient.receive_messages(
                endpoint: "http://signal.test/api/v1/rpc",
-               req_options: [adapter: adapter]
+               req_options: request_options(adapter)
              )
   end
 
@@ -135,7 +146,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
              JsonRpcClient.send_message("+15555550100", "gif",
                endpoint: "http://signal.test/api/v1/rpc",
                attachments: [%{path: "/tmp/report.txt"}, attachment],
-               req_options: [adapter: adapter]
+               req_options: request_options(adapter)
              )
 
     assert_received {:rpc_body, body}

@@ -206,10 +206,6 @@ defmodule Jido.Chat.Signal.Transport.CliClient do
   defp json_candidate?("[" <> _rest), do: true
   defp json_candidate?(_line), do: false
 
-  defp normalize_decoded_messages(messages) when is_list(messages) do
-    Enum.flat_map(messages, &normalize_decoded_messages/1)
-  end
-
-  defp normalize_decoded_messages(message) when is_map(message), do: [message]
-  defp normalize_decoded_messages(_message), do: []
+  defp normalize_decoded_messages(messages) when is_list(messages), do: messages
+  defp normalize_decoded_messages(message), do: [message]
 end

@@ -32,7 +32,11 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
   end
 
   defmodule SelectiveSink do
-    def emit(test_pid, %{"id" => "bad"} = payload, opts) do
+    def emit(
+          test_pid,
+          %Jido.Chat.Delivery{signals: [%Jido.Signal{data: %{"message_id" => "bad"}}]} = payload,
+          opts
+        ) do
       send(test_pid, {:sink_emit, payload, opts})
       {:error, :sink_failed}
     end
@@ -41,6 +45,21 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
       send(test_pid, {:sink_emit, payload, opts})
       {:ok, :accepted}
     end
+  end
+
+  defp test_binding do
+    {:ok, value} = Jido.Chat.bind(Adapter, id: "signal-polling")
+    value
+  end
+
+  defp message(stamp) do
+    %{
+      "envelope" => %{
+        "sourceNumber" => "+15555550100",
+        "timestamp" => stamp,
+        "dataMessage" => %{"timestamp" => stamp, "message" => "hello"}
+      }
+    }
   end
 
   test "adapter listener_child_specs/2 returns expected polling specs" do
@@ -98,11 +117,34 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
     assert rpc_opts[:receiver_opts][:max_messages] == 5
   end
 
+  test "listener setup uses the captured binding transport settings" do
+    {:ok, binding} =
+      Jido.Chat.bind(Adapter,
+        id: "captured",
+        account: "+15555550102",
+        endpoint: "http://captured.test/rpc",
+        executable: "captured-cli"
+      )
+
+    assert {:ok, [spec]} =
+             Adapter.listener_child_specs("captured",
+               binding: binding,
+               ingress: %{mode: "rpc_polling"},
+               sink_mfa: {OkSink, :emit, [self()]}
+             )
+
+    %{start: {PollingWorker, :start_link, [opts]}} = spec
+    assert opts[:receiver_opts][:account] == "+15555550102"
+    assert opts[:receiver_opts][:endpoint] == "http://captured.test/rpc"
+    assert opts[:receiver_opts][:executable] == "captured-cli"
+    assert opts[:binding] == binding
+  end
+
   test "polling worker emits received envelopes through sink" do
     {:ok, responses_agent} =
       Agent.start_link(fn ->
         [
-          {:ok, [%{"envelope" => %{"timestamp" => 1_776_000_000}}]},
+          {:ok, [message(1_776_000_000)]},
           {:ok, []}
         ]
       end)
@@ -110,6 +152,7 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
     {:ok, _pid} =
       start_supervised(
         {PollingWorker,
+         binding: test_binding(),
          bridge_id: "bridge_signal",
          sink_mfa: {OkSink, :emit, [self()]},
          receiver: PollingReceiver,
@@ -119,8 +162,14 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
       )
 
     assert_receive {:receive_call, _opts}, 200
-    assert_receive {:sink_emit, %{"envelope" => %{"timestamp" => 1_776_000_000}}, sink_opts}, 200
-    assert sink_opts[:mode] == :payload
+
+    assert_receive {:sink_emit,
+                    %Jido.Chat.Delivery{
+                      signals: [%Jido.Signal{data: %{"message_id" => "1776000000"}}]
+                    }, sink_opts},
+                   200
+
+    refute Keyword.has_key?(sink_opts, :mode)
 
     assert_receive {:receive_call, _opts}, 400
   end
@@ -129,7 +178,7 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
     {:ok, responses_agent} =
       Agent.start_link(fn ->
         [
-          {:ok, [%{"envelope" => %{"timestamp" => 1_776_000_001}}]},
+          {:ok, [message(1_776_000_001)]},
           {:ok, []}
         ]
       end)
@@ -137,6 +186,7 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
     {:ok, _pid} =
       start_supervised(
         {PollingWorker,
+         binding: test_binding(),
          bridge_id: "bridge_signal",
          sink_mfa: {ErrorSink, :emit, [self()]},
          receiver: PollingReceiver,
@@ -146,7 +196,13 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
       )
 
     assert_receive {:receive_call, _opts}, 200
-    assert_receive {:sink_emit, %{"envelope" => %{"timestamp" => 1_776_000_001}}, _sink_opts}, 200
+
+    assert_receive {:sink_emit,
+                    %Jido.Chat.Delivery{
+                      signals: [%Jido.Signal{data: %{"message_id" => "1776000001"}}]
+                    }, _sink_opts},
+                   200
+
     assert_receive {:receive_call, _opts}, 400
   end
 
@@ -154,7 +210,7 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
     {:ok, responses_agent} =
       Agent.start_link(fn ->
         [
-          {:ok, [%{"id" => "bad"}, %{"id" => "good"}]},
+          {:ok, [message("bad"), message("good")]},
           {:ok, []}
         ]
       end)
@@ -162,6 +218,7 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
     {:ok, _pid} =
       start_supervised(
         {PollingWorker,
+         binding: test_binding(),
          bridge_id: "bridge_signal",
          sink_mfa: {SelectiveSink, :emit, [self()]},
          receiver: PollingReceiver,
@@ -171,8 +228,17 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
       )
 
     assert_receive {:receive_call, _opts}, 200
-    assert_receive {:sink_emit, %{"id" => "bad"}, _sink_opts}, 200
-    assert_receive {:sink_emit, %{"id" => "good"}, _sink_opts}, 200
+
+    assert_receive {:sink_emit,
+                    %Jido.Chat.Delivery{signals: [%Jido.Signal{data: %{"message_id" => "bad"}}]},
+                    _sink_opts},
+                   200
+
+    assert_receive {:sink_emit,
+                    %Jido.Chat.Delivery{signals: [%Jido.Signal{data: %{"message_id" => "good"}}]},
+                    _sink_opts},
+                   200
+
     assert_receive {:receive_call, _opts}, 400
   end
 end
