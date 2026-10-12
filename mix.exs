@@ -32,7 +32,7 @@ defmodule Jido.Chat.Signal.MixProject do
 
   defp deps do
     [
-      {:jido_chat, "~> 1.2 and >= 1.2.1"},
+      chat_dependency(),
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:dotenvy, "~> 1.1", only: [:test]},
@@ -40,6 +40,16 @@ defmodule Jido.Chat.Signal.MixProject do
       {:ex_doc, "~> 0.40.4", only: :dev, runtime: false},
       {:git_ops, "~> 2.9", only: :dev, runtime: false}
     ]
+  end
+
+  defp chat_dependency do
+    case {Mix.env(), System.get_env("JIDO_CHAT_PATH")} do
+      {env, path} when env in [:dev, :test] and is_binary(path) and path != "" ->
+        {:jido_chat, path: path}
+
+      _ ->
+        {:jido_chat, "~> 2.0"}
+    end
   end
 
   defp aliases do
