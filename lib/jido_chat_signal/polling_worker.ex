@@ -21,7 +21,8 @@ defmodule Jido.Chat.Signal.PollingWorker do
           receiver_opts: keyword(),
           poll_interval_ms: pos_integer(),
           max_backoff_ms: pos_integer(),
-          backoff_ms: pos_integer()
+          backoff_ms: pos_integer(),
+          last_result: term()
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -44,7 +45,8 @@ defmodule Jido.Chat.Signal.PollingWorker do
       receiver_opts: Keyword.get(opts, :receiver_opts, []),
       poll_interval_ms: poll_interval_ms,
       max_backoff_ms: normalize_pos_integer(opts[:max_backoff_ms], 10_000),
-      backoff_ms: poll_interval_ms
+      backoff_ms: poll_interval_ms,
+      last_result: nil
     }
 
     send(self(), :poll)
@@ -58,17 +60,19 @@ defmodule Jido.Chat.Signal.PollingWorker do
         case emit_messages(messages, state) do
           :ok ->
             schedule_poll(state.poll_interval_ms)
-            {:noreply, %{state | backoff_ms: state.poll_interval_ms}}
 
-          {:error, _reason} ->
-            schedule_backoff(state)
+            {:noreply,
+             %{state | backoff_ms: state.poll_interval_ms, last_result: {:ok, length(messages)}}}
+
+          {:error, _reason} = error ->
+            schedule_backoff(%{state | last_result: error})
         end
 
       {:ok, _invalid} ->
-        schedule_backoff(state)
+        schedule_backoff(%{state | last_result: {:error, :invalid_receive_result}})
 
-      {:error, _reason} ->
-        schedule_backoff(state)
+      {:error, _reason} = error ->
+        schedule_backoff(%{state | last_result: error})
     end
   end
 
@@ -100,6 +104,10 @@ defmodule Jido.Chat.Signal.PollingWorker do
   defp invoke_sink({module, function, base_args}, payload, opts)
        when is_atom(module) and is_atom(function) and is_list(base_args) and is_list(opts) do
     apply(module, function, base_args ++ [payload, opts])
+  rescue
+    _ -> {:error, :sink_exception}
+  catch
+    _, _ -> {:error, :sink_exception}
   end
 
   defp invoke_sink(_sink_mfa, _payload, _opts), do: {:error, :invalid_sink_mfa}

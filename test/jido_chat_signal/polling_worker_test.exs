@@ -241,4 +241,70 @@ defmodule Jido.Chat.Signal.PollingWorkerTest do
 
     assert_receive {:receive_call, _opts}, 400
   end
+
+  defmodule FailingSink do
+    def emit(test_pid, mode, delivery, _opts) do
+      send(test_pid, {:attempted, delivery})
+
+      case mode do
+        :error -> {:error, :rejected}
+        :raise -> raise "private-sink-error"
+        :throw -> throw(:private_sink_error)
+        :exit -> exit(:private_sink_error)
+        :invalid -> :invalid
+      end
+    end
+  end
+
+  for mode <- [:error, :raise, :throw, :exit, :invalid] do
+    test "sink #{mode} is reported, keeps the worker alive and retains polling backoff" do
+      {:ok, responses} = Agent.start_link(fn -> [{:ok, [message(1), message(2)]}] end)
+      interval = 60_000
+
+      state = %{
+        bridge_id: "test",
+        binding: test_binding(),
+        receiver: PollingReceiver,
+        receiver_opts: [test_pid: self(), responses_agent: responses],
+        sink_mfa: {FailingSink, :emit, [self(), unquote(mode)]},
+        sink_opts: [],
+        backoff_ms: interval,
+        poll_interval_ms: interval,
+        max_backoff_ms: interval * 4,
+        last_result: nil
+      }
+
+      assert {:noreply, after_poll} = PollingWorker.handle_info(:poll, state)
+      assert after_poll.backoff_ms == interval * 2
+      assert {:error, {:sink_failures, [_, _]}} = after_poll.last_result
+      assert_receive {:attempted, %{signals: [%{data: %{"message_id" => "1"}}]}}
+      assert_receive {:attempted, %{signals: [%{data: %{"message_id" => "2"}}]}}
+      refute_receive {:attempted, _}
+      refute Map.has_key?(after_poll, :checkpoint)
+    end
+  end
+
+  test "a complete limit breach causes zero sink calls" do
+    input =
+      put_in(message(3), ["envelope", "dataMessage", "message"], String.duplicate("x", 262_145))
+
+    {:ok, responses} = Agent.start_link(fn -> [{:ok, [input]}] end)
+
+    state = %{
+      bridge_id: "test",
+      binding: test_binding(),
+      receiver: PollingReceiver,
+      receiver_opts: [test_pid: self(), responses_agent: responses],
+      sink_mfa: {OkSink, :emit, [self()]},
+      sink_opts: [],
+      backoff_ms: 60_000,
+      poll_interval_ms: 60_000,
+      max_backoff_ms: 120_000,
+      last_result: nil
+    }
+
+    assert {:noreply, after_poll} = PollingWorker.handle_info(:poll, state)
+    assert {:error, {:sink_failures, [%{code: :signal_too_large}]}} = after_poll.last_result
+    refute_receive {:sink_emit, _, _}
+  end
 end

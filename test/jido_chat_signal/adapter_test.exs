@@ -6,6 +6,7 @@ defmodule Jido.Chat.Signal.AdapterTest do
   alias Jido.Chat.Errors.Contract
   alias Jido.Chat.Operations.Definitions
   alias Jido.Chat.Signal.{Adapter, Identity, PostMessage, SendMessage}
+  alias Jido.Signal.{Context, Trace}
 
   defmodule FakeTransport do
     @behaviour Jido.Chat.Signal.Transport
@@ -219,6 +220,11 @@ defmodule Jido.Chat.Signal.AdapterTest do
     refute hd(one.signals).source == hd(other_delivery.signals).source
   end
 
+  @matrix Path.expand("../../../jido_chat/docs/migration/adapter-matrix.json", __DIR__)
+          |> File.read!()
+          |> Jason.decode!()
+  @row Enum.find(@matrix["adapters"], &(&1["package"] == "jido_chat_signal"))
+
   for {_type, {_definition, operation, _fields, _shape, _schema}} <-
         Definitions.all() do
     test "#{operation}: declared operation selects its exact native/fallback/unsupported result" do
@@ -227,6 +233,7 @@ defmodule Jido.Chat.Signal.AdapterTest do
       request = Factories.operation_request(binding, operation)
       result = assert_operation_result(Jido.Chat.execute(binding, request))
       support = Jido.Chat.Adapter.capabilities(Adapter)[operation]
+      assert Atom.to_string(support) == @row["operation_support"][Atom.to_string(operation)]
 
       if support == :unsupported do
         assert result.type == "jido.chat.operation.failed"
@@ -243,6 +250,10 @@ defmodule Jido.Chat.Signal.AdapterTest do
         end
       end
 
+      assert {:ok, ^result} = Jido.Chat.execute(binding, request)
+      refute_received {:signal_send, _, _, _}
+      assert Context.get(result, "causationid") == request.id
+      assert Trace.get(result).trace_id == Trace.get(request).trace_id
       assert :ok = assert_json_round_trip(result)
     end
   end
@@ -335,5 +346,92 @@ defmodule Jido.Chat.Signal.AdapterTest do
     refute Jason.encode!(Jido.Signal.to_map(result)) =~ "private-token"
     assert_received {:signal_send, "room-1", "hello", _}
     refute_received {:signal_send, _, _, _}
+  end
+
+  for {name, support} <- @row["event_support"] do
+    test "#{name} matches frozen #{support} without inferred events" do
+      input =
+        if unquote(name) == "MessageReceived",
+          do: message(),
+          else: %{"envelope" => %{unquote(name) => %{}}}
+
+      assert {:ok, %{signals: [fact]}} = Jido.Chat.normalize_event(test_binding(), input)
+
+      expected =
+        if unquote(name) == "MessageReceived",
+          do: "jido.chat.message.received",
+          else: "jido.chat.normalization.failed"
+
+      assert fact.type == expected
+      assert_json_round_trip(fact)
+    end
+  end
+
+  test "an item keeps its identity when its batch position changes" do
+    binding = test_binding()
+    assert {:ok, %{signals: [one]}} = Jido.Chat.normalize_event(binding, message(2))
+
+    assert {:ok, %{signals: [_, many]}} =
+             Jido.Chat.normalize_event(binding, [message(1), message(2)])
+
+    assert one.data["item_id"] == many.data["item_id"]
+  end
+
+  test "all four complete limits reject and cancel newly created media" do
+    binding = test_binding()
+    media = %{"filename" => "private.bin", "path" => "/private/media"}
+
+    make = fn stamp, text ->
+      put_in(message(stamp, text), ["envelope", "dataMessage", "attachments"], [media])
+    end
+
+    cases = [
+      {make.(1, String.duplicate("x", 262_145)), :signal_too_large},
+      {Enum.map(1..101, &make.(&1, "body")), :too_many_signals},
+      {List.duplicate(nil, 21), :too_many_failures},
+      {Enum.map(1..6, &make.(&1, String.duplicate("x", 200_000))), :delivery_too_large}
+    ]
+
+    for {input, expected} <- cases do
+      assert {:error, %{code: ^expected}} = Jido.Chat.normalize_event(binding, input)
+
+      refute Enum.any?(:ets.tab2list(binding.resources), fn
+               {{:resource, _}, _, _, _, _, :active} -> true
+               _ -> false
+             end)
+    end
+
+    invalid = put_in(message(), ["envelope", "dataMessage", "attachments"], [media, :invalid])
+
+    assert {:ok, %{signals: [%{type: "jido.chat.normalization.failed"}]}} =
+             Jido.Chat.normalize_event(binding, invalid)
+
+    refute Enum.any?(:ets.tab2list(binding.resources), fn
+             {{:resource, _}, _, _, _, _, :active} -> true
+             _ -> false
+           end)
+  end
+
+  test "media owner, cancellation and expiry remain private" do
+    binding = test_binding()
+
+    input =
+      put_in(message(), ["envelope", "dataMessage", "attachments"], [%{"path" => "/private/file"}])
+
+    assert {:ok, %{signals: [fact]}} = Jido.Chat.normalize_event(binding, input)
+    [item] = fact.data["media"]
+    ref = item["resource_ref"]
+    assert {:ok, media} = Jido.Chat.resolve_resource(binding, ref)
+    assert media["path"] == "/private/file"
+
+    assert {:error, %{code: :resource_owner_mismatch}} =
+             Task.async(fn -> Jido.Chat.resolve_resource(binding, ref) end) |> Task.await()
+
+    assert :ok = Jido.Chat.cancel_resource(binding, ref)
+    assert {:error, %{code: :resource_cancelled}} = Jido.Chat.resolve_resource(binding, ref)
+    {:ok, expired} = Jido.Chat.put_resource(binding, "media", media, ttl_ms: 0)
+    assert {:error, %{code: :resource_expired}} = Jido.Chat.resolve_resource(binding, expired)
+    assert_json_round_trip(fact)
+    refute Jason.encode!(Jido.Signal.to_map(fact)) =~ "/private/file"
   end
 end

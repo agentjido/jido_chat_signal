@@ -10,35 +10,79 @@ defmodule Jido.Chat.Signal.Normalizer do
   def normalize(binding, payload) do
     items = if is_list(payload), do: payload, else: [payload]
     delivery_id = "signal:" <> digest({binding.id, Enum.map(items, &provider_identity/1)})
+    tracker = make_ref()
+    Process.put(tracker, [])
 
-    signals =
-      items
-      |> Enum.with_index()
-      |> Enum.map(fn {item, index} -> fact(binding, delivery_id, item, index) end)
+    result =
+      with {:ok, signals} <- facts(binding, delivery_id, items, tracker),
+           do: Delivery.new(binding, delivery_id, signals)
 
-    Delivery.new(binding, delivery_id, signals)
+    if match?({:error, _}, result), do: cancel(binding, Process.get(tracker))
+    Process.delete(tracker)
+    result
   end
 
-  defp fact(binding, delivery_id, item, index) do
-    item_id = "signal:item:" <> digest({provider_identity(item), index})
+  defp facts(binding, delivery_id, items, tracker) do
+    items
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {item, index}, {:ok, acc} ->
+      existing = Process.get(tracker)
+
+      result =
+        try do
+          fact(binding, delivery_id, item, index, tracker)
+        rescue
+          _ -> :invalid
+        catch
+          _, _ -> :invalid
+        end
+
+      case result do
+        {:ok, fact} ->
+          {:cont, {:ok, acc ++ [fact]}}
+
+        {:error, %Jido.Chat.Errors.Contract{code: code}} = error
+        when code in [
+               :signal_too_large,
+               :delivery_too_large,
+               :too_many_signals,
+               :too_many_failures
+             ] ->
+          {:halt, error}
+
+        _ ->
+          cancel(binding, Process.get(tracker) -- existing)
+
+          failure =
+            NormalizationFailed.new!(
+              %{
+                "item_id" => item_identity(item),
+                "delivery_id" => delivery_id,
+                "code" => "invalid_item",
+                "item_index" => index
+              },
+              options(binding, nil)
+            )
+
+          {:cont, {:ok, acc ++ [failure]}}
+      end
+    end)
+  end
+
+  defp item_identity(item), do: "signal:item:" <> digest({provider_identity(item), :message, 0})
+  defp cancel(binding, refs), do: Enum.each(refs, &Jido.Chat.cancel_resource(binding, &1))
+
+  defp fact(binding, delivery_id, item, _index, tracker) do
+    item_id = item_identity(item)
 
     with {:ok, envelope} <- envelope(item),
          {:ok, data} <- data_message(envelope),
-         {:ok, fields} <- message_fields(binding, envelope, data),
+         {:ok, fields} <- message_fields(binding, envelope, data, tracker),
          fields <- Map.merge(fields, %{"item_id" => item_id, "delivery_id" => delivery_id}),
          {:ok, signal} <- MessageReceived.new(fields, options(binding, fields["room_id"])) do
-      signal
+      {:ok, signal}
     else
-      _ ->
-        NormalizationFailed.new!(
-          %{
-            "item_id" => item_id,
-            "delivery_id" => delivery_id,
-            "code" => "invalid_item",
-            "item_index" => index
-          },
-          options(binding, nil)
-        )
+      result -> result
     end
   end
 
@@ -57,10 +101,10 @@ defmodule Jido.Chat.Signal.Normalizer do
     if is_map(data), do: {:ok, data}, else: :invalid
   end
 
-  defp message_fields(binding, envelope, data) do
+  defp message_fields(binding, envelope, data, tracker) do
     with {:ok, source, room, group, stamp} <- message_identity(envelope, data),
          {:ok, text, attachments} <- message_content(data),
-         {:ok, media} <- media(binding, attachments) do
+         {:ok, media} <- media(binding, attachments, tracker) do
       sender = put_text(%{"id" => source}, "display_name", envelope["sourceName"])
 
       sender =
@@ -129,7 +173,7 @@ defmodule Jido.Chat.Signal.Normalizer do
   defp valid_stamp?(value) when is_integer(value), do: true
   defp valid_stamp?(value), do: non_empty_string?(value)
 
-  defp media(binding, attachments) do
+  defp media(binding, attachments, tracker) do
     Enum.reduce_while(attachments, {:ok, []}, fn
       attachment, {:ok, acc} when is_map(attachment) ->
         media_type = MediaType.normalize(non_blank(attachment, ["contentType", "content_type"]))
@@ -137,6 +181,8 @@ defmodule Jido.Chat.Signal.Normalizer do
 
         case Jido.Chat.put_resource(binding, "media", attachment) do
           {:ok, ref} ->
+            Process.put(tracker, [ref | Process.get(tracker)])
+
             value = %{
               "kind" => Atom.to_string(MediaType.kind(media_type, name)),
               "resource_ref" => ref
