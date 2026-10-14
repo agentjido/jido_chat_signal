@@ -33,6 +33,7 @@ defmodule Jido.Chat.Signal.MixProject do
   defp deps do
     [
       chat_dependency(),
+      signal_test_dependency(),
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:dotenvy, "~> 1.1", only: [:test]},
@@ -40,6 +41,15 @@ defmodule Jido.Chat.Signal.MixProject do
       {:ex_doc, "~> 0.40.4", only: :dev, runtime: false},
       {:git_ops, "~> 2.9", only: :dev, runtime: false}
     ]
+  end
+
+  # The published beta lacks the Signal API used by this migration.
+  defp signal_test_dependency do
+    {:jido_signal,
+     git: "https://github.com/agentjido/jido_signal.git",
+     ref: "d6611eca1c95eb507843baceb55991e4801d8421",
+     only: [:dev, :test],
+     override: true}
   end
 
   defp chat_dependency do
