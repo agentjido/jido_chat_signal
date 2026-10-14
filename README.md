@@ -8,99 +8,64 @@
 [![Ecosystem](https://img.shields.io/badge/ecosystem-jido.run-0ea5e9.svg)](https://jido.run/ecosystem)
 [![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://jido.run/discord)
 
-`jido_chat_signal` adapts Signal messages to `Jido.Chat.Adapter` through [`signal-cli`](https://github.com/AsamK/signal-cli).
+`jido_chat_signal` provides the `Jido.Chat.Signal.Adapter` adapter for the public Chat Signal contract.
 
-## Installation
+## Release status
 
-```elixir
-def deps do
-  [
-    {:jido_chat_signal, "~> 0.1"}
-  ]
-end
-```
+This branch proposes version 2.0. It changes the public communication API.
+Use the immutable PR source commits for review and tests. The new Hex releases
+are not yet published. Production requires Chat 2.0 and compatible upstream
+Signal releases. The dependency helpers keep source pins in development and test.
 
-## signal-cli setup
+## Typed operations
 
-Install and link/register `signal-cli`. For JSON-RPC send-only mode, start the daemon:
-
-```bash
-signal-cli -a +15555550100 daemon --http=127.0.0.1:8080
-```
-
-For production JSON-RPC polling ingress, start the daemon in manual receive mode:
-
-```bash
-signal-cli -a +15555550100 daemon --http=127.0.0.1:8080 --receive-mode manual --no-receive-stdout
-```
-
-For CLI live tests, the one-shot `signal-cli send` path is enough. For
-multi-account mode, omit `-a` from the daemon command and set `SIGNAL_ACCOUNT`.
-
-## Live testing
-
-Set:
-
-```bash
-RUN_LIVE_SIGNAL_TESTS=true
-SIGNAL_TRANSPORT=cli
-SIGNAL_ACCOUNT=+15555550100
-SIGNAL_TEST_RECIPIENT=+15555550101
-```
-
-Run:
-
-```bash
-mix test --include live
-```
-
-The live test sends a text message, a small file attachment, a GIF attachment,
-and a quoted reply.
-Use `SIGNAL_TRANSPORT=json_rpc` when testing against `signal-cli daemon --http`.
-In that mode, also set `SIGNAL_RPC_ENDPOINT`.
-
-## Ingress
-
-For production, prefer JSON-RPC polling against `signal-cli daemon --http`:
+The application supplies private binding options and a provider room ID:
 
 ```elixir
-opts: %{
-  ingress: %{
-    mode: "rpc_polling",
-    endpoint: System.fetch_env!("SIGNAL_RPC_ENDPOINT"),
-    account: System.fetch_env!("SIGNAL_ACCOUNT"),
-    receive_timeout_s: 3,
-    max_messages: 10,
-    poll_interval_ms: 1_000
-  }
-}
+{:ok, binding} = Jido.Chat.bind(Jido.Chat.Signal.Adapter, private_binding_options)
+request = Jido.Chat.Signal.SendMessage.new!(%{
+  "request_id" => "request-1",
+  "room_id" => provider_room_id,
+  "text" => "Hello"
+})
+{:ok, result} = Jido.Chat.execute(binding, request)
 ```
 
-This calls the daemon's JSON-RPC `receive` method on each poll. The daemon must
-run with `--receive-mode manual`; otherwise Signal may already be receiving and
-the explicit `receive` RPC can be rejected.
+The result is an OperationCompleted or OperationFailed signal. Repeating an
+admitted request uses its saved result. Private tokens, clients and resources
+stay outside signal data. Unsupported operations return a defined typed result.
 
-For local CLI-only setups, use adapter-owned CLI polling:
+## Inbound delivery
+
+Normalize one complete verified provider input unit with the configured binding:
 
 ```elixir
-opts: %{
-  ingress: %{
-    mode: "polling",
-    account: System.fetch_env!("SIGNAL_ACCOUNT"),
-    receive_timeout_s: 1,
-    max_messages: 10,
-    poll_interval_ms: 1_000
-  }
-}
+{:ok, delivery} = Jido.Chat.normalize_event(binding, verified_provider_input)
+{:ok, observations} = MyApp.Messaging.accept_delivery(delivery)
 ```
 
-Both polling modes emit each envelope through the bridge `sink_mfa` and let the
-runtime call `Jido.Chat.Signal.Adapter.transform_incoming/1`.
+The Messaging instance owns runtime acceptance. Deliveries retain ordered facts
+and explicit item failures. Membership evidence does not create grants or start
+message handlers. A rejected listener sink follows the provider checkpoint rule.
+Configure protocol version 1 before starting provider listeners.
 
-`signal-cli daemon --http` also exposes `GET /api/v1/events` as a Server-Sent
-Events stream. The RPC poller is simpler to supervise and keeps receive ownership
-inside the bridge runtime.
+## Operation support
 
-## Local Documentation
+Native: `send_message`, `send_file`, `post_message`.
 
-Run `mix docs` to generate HTML and Markdown documentation in `doc/`, including Markdown pages and `llms.txt`.
+Fallback: `fetch_metadata`, `fetch_thread`, `post_channel_message`, `stream`.
+
+All other operations are explicitly unsupported. See the frozen [adapter matrix](https://github.com/agentjido/jido_chat/blob/codex/public-signal-v3/docs/migration/adapter-matrix.json).
+
+## Provider setup
+
+Signal uses signal-cli. CLI and JSON-RPC polling use the same native contract. Run the JSON-RPC daemon with manual receive mode for explicit polling. Keep account settings and endpoint details in the binding.
+
+## Checks and migration
+
+Run `mix test` and `mix quality`. Live tests stay excluded by default. The fixed
+provider fixtures do not need credentials or live traffic.
+
+See the [migration guide](https://github.com/agentjido/jido_chat/blob/codex/public-signal-v3/docs/migration/MIGRATION_GUIDE.md)
+for API mappings, the complete runnable local example, limits, release order and
+rollback pins. Run `mix docs` to build this package's API documentation.
