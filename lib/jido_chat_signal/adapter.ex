@@ -2,8 +2,15 @@ defmodule Jido.Chat.Signal.Adapter do
   @moduledoc "Signal `Jido.Chat.Adapter` implementation backed by `signal-cli`."
   use Jido.Chat.Adapter
 
-  alias Jido.Chat.{Author, FileUpload, Incoming, Media, MediaType, PostPayload, Response}
-  alias Jido.Chat.Signal.{PollingWorker, Transport.CliClient, Transport.JsonRpcClient}
+  alias Jido.Chat.{Binding, FileUpload, PostPayload}
+
+  alias Jido.Chat.Signal.{
+    Normalizer,
+    Policy,
+    PollingWorker,
+    Transport.CliClient,
+    Transport.JsonRpcClient
+  }
 
   @no_listener_modes MapSet.new(["none", "manual"])
   @polling_modes MapSet.new([
@@ -26,7 +33,6 @@ defmodule Jido.Chat.Signal.Adapter do
       fetch_metadata: :fallback,
       webhook: :unsupported,
       verify_webhook: :unsupported,
-      parse_event: :unsupported,
       send_file: :native,
       post_message: :native,
       edit_message: :unsupported,
@@ -40,29 +46,33 @@ defmodule Jido.Chat.Signal.Adapter do
   end
 
   @impl true
-  def transform_incoming(%{"envelope" => envelope} = payload) do
-    with {:ok, data} <- data_message(envelope) do
-      {:ok, incoming_from_envelope(envelope, data, payload)}
-    end
-  end
-
-  def transform_incoming(%{"params" => %{"result" => %{"envelope" => envelope}}} = payload) do
-    with {:ok, data} <- data_message(envelope) do
-      {:ok, incoming_from_envelope(envelope, data, payload)}
-    end
-  end
-
-  def transform_incoming(_), do: {:error, :unsupported_payload}
+  def signal_protocol, do: 1
 
   @impl true
-  def send_message(room_id, text, opts \\ []) do
+  def configure_binding(opts) when is_list(opts) do
+    {:ok,
+     opts
+     |> Keyword.put_new(:transport, JsonRpcClient)
+     |> Keyword.put_new(:account, System.get_env("SIGNAL_ACCOUNT") || "")
+     |> Keyword.put_new(
+       :endpoint,
+       System.get_env("SIGNAL_RPC_ENDPOINT") || "http://127.0.0.1:8080/api/v1/rpc"
+     )
+     |> Keyword.put_new(:executable, System.get_env("SIGNAL_CLI_PATH") || "signal-cli")}
+  end
+
+  @impl true
+  def normalize_event(binding, payload), do: Normalizer.normalize(binding, payload)
+
+  @impl true
+  def send_message(room_id, text, opts) do
     with {:ok, raw} <- transport(opts).send_message(to_string(room_id), text, opts) do
       {:ok, response_from_raw(raw, room_id)}
     end
   end
 
   @impl true
-  def send_file(room_id, file, opts \\ []) do
+  def send_file(room_id, file, opts) do
     payload =
       PostPayload.text(Keyword.get(opts, :caption, Keyword.get(opts, :text, "")),
         files: [FileUpload.normalize(file)]
@@ -72,16 +82,13 @@ defmodule Jido.Chat.Signal.Adapter do
   end
 
   @impl true
-  def post_message(room_id, %PostPayload{} = payload, opts \\ []) do
+  def post_message(room_id, %PostPayload{} = payload, opts) do
     attachments = Enum.map(PostPayload.upload_candidates(payload), &FileUpload.normalize/1)
     text = PostPayload.display_text(payload) || ""
     send_opts = opts |> Keyword.delete(:caption) |> Keyword.put(:attachments, attachments)
 
     with {:ok, raw} <- transport(opts).send_message(to_string(room_id), text, send_opts) do
-      {:ok,
-       raw
-       |> response_from_raw(room_id)
-       |> put_response_metadata(:attachments, PostPayload.outbound_attachments(payload))}
+      {:ok, response_from_raw(raw, room_id)}
     end
   end
 
@@ -94,8 +101,15 @@ defmodule Jido.Chat.Signal.Adapter do
         {:ok, []}
 
       :polling ->
-        with {:ok, sink_mfa} <- validate_sink_mfa(Keyword.get(opts, :sink_mfa)) do
-          worker_opts = polling_worker_opts(bridge_id, ingress, opts, sink_mfa)
+        with {:ok, sink_mfa} <- validate_sink_mfa(Keyword.get(opts, :sink_mfa)),
+             {:ok, binding} <- listener_binding(bridge_id, opts) do
+          worker_opts =
+            polling_worker_opts(
+              bridge_id,
+              ingress,
+              Keyword.put(opts, :binding, binding),
+              sink_mfa
+            )
 
           {:ok,
            [
@@ -111,131 +125,24 @@ defmodule Jido.Chat.Signal.Adapter do
     end
   end
 
-  defp incoming_from_envelope(envelope, data, payload) do
-    group_id = get_in(data, ["groupInfo", "groupId"]) || get_in(data, ["groupV2", "masterKey"])
-    source = envelope["sourceUuid"] || envelope["sourceNumber"] || envelope["source"]
-    room_id = if group_id, do: "group:#{group_id}", else: source
-
-    Incoming.new(%{
-      external_room_id: room_id,
-      external_thread_id: group_id,
-      external_message_id: to_string(data["timestamp"] || envelope["timestamp"]),
-      external_reply_to_id: quote_id(data["quote"]),
-      external_user_id: source,
-      text: data["message"] || "",
-      timestamp: data["timestamp"] || envelope["timestamp"],
-      author: author(source, envelope["sourceName"]),
-      chat_type: if(group_id, do: :group, else: :direct_message),
-      media: media_from_attachments(data["attachments"]),
-      raw: payload,
-      metadata: %{
-        "source_device" => envelope["sourceDevice"],
-        "quote" => data["quote"]
-      }
-    })
+  defp response_from_raw(raw, room_id) when is_map(raw) do
+    %{
+      "id" => to_string(raw["timestamp"] || raw[:timestamp] || ""),
+      "room_id" => to_string(room_id)
+    }
   end
 
-  defp data_message(envelope) when is_map(envelope) do
-    data =
-      cond do
-        is_map(envelope["dataMessage"]) ->
-          envelope["dataMessage"]
-
-        is_map(get_in(envelope, ["syncMessage", "sentMessage"])) ->
-          get_in(envelope, ["syncMessage", "sentMessage"])
-
-        true ->
-          nil
-      end
-
-    cond do
-      is_nil(data) -> {:error, :unsupported_envelope}
-      message_content?(data) -> {:ok, data}
-      true -> {:error, :empty_data_message}
-    end
-  end
-
-  defp data_message(_envelope), do: {:error, :unsupported_envelope}
-
-  defp message_content?(data) when is_map(data) do
-    non_empty_string?(data["message"]) or non_empty_attachments?(data["attachments"])
-  end
-
-  defp non_empty_string?(value) when is_binary(value), do: String.trim(value) != ""
-  defp non_empty_string?(_value), do: false
-
-  defp non_empty_attachments?(attachments) when is_list(attachments), do: attachments != []
-  defp non_empty_attachments?(_attachments), do: false
-
-  defp author(nil, _name), do: nil
-
-  defp author(source, name) do
-    Author.new(%{
-      user_id: to_string(source),
-      user_name: name || to_string(source),
-      full_name: name
-    })
-  end
-
-  defp response_from_raw(raw, room_id) do
-    Response.new(%{
-      external_message_id: raw["timestamp"] || raw[:timestamp],
-      external_room_id: room_id,
-      timestamp: raw["timestamp"] || raw[:timestamp],
-      channel_type: :signal,
-      raw: raw
-    })
-  end
-
-  defp put_response_metadata(%Response{} = response, key, value) do
-    %{response | metadata: Map.put(response.metadata, key, value)}
-  end
-
-  defp quote_id(nil), do: nil
-
-  defp quote_id(quote) when is_map(quote) do
-    quote["id"] || quote["timestamp"] || quote["quoteTimestamp"]
-  end
-
-  defp media_from_attachments(attachments) when is_list(attachments) do
-    Enum.map(attachments, fn attachment ->
-      media_type = attachment_content_type(attachment)
-      filename = attachment_filename(attachment)
-
-      Media.new(%{
-        kind: attachment_kind(media_type, filename),
-        media_type: media_type,
-        filename: filename,
-        size_bytes: attachment["size"],
-        metadata: attachment
-      })
-    end)
-  end
-
-  defp media_from_attachments(_attachments), do: []
-
-  defp attachment_content_type(attachment) do
-    attachment
-    |> get_non_blank(["contentType", "content_type"])
-    |> MediaType.normalize()
-  end
-
-  defp attachment_filename(attachment), do: get_non_blank(attachment, ["filename", "fileName"])
-
-  defp attachment_kind(media_type, filename), do: MediaType.kind(media_type, filename)
-
-  defp get_non_blank(map, keys) do
-    Enum.find_value(keys, &non_blank_map_value(map, &1))
-  end
-
-  defp non_blank_map_value(map, key) do
-    case Map.get(map, key) do
-      value when is_binary(value) -> if(String.trim(value) == "", do: nil, else: value)
-      _other -> nil
-    end
-  end
+  defp response_from_raw(_raw, _room_id), do: nil
 
   defp transport(opts), do: Keyword.get(opts, :transport, JsonRpcClient)
+
+  defp listener_binding(bridge_id, opts) do
+    case Keyword.get(opts, :binding) do
+      %Binding{adapter: __MODULE__} = binding -> {:ok, binding}
+      nil -> Jido.Chat.bind(__MODULE__, Keyword.put(opts, :id, bridge_id))
+      _ -> Policy.error(:invalid_binding)
+    end
+  end
 
   defp normalize_ingress_opts(opts) do
     opts
@@ -266,16 +173,21 @@ defmodule Jido.Chat.Signal.Adapter do
   defp polling_worker_opts(bridge_id, ingress, opts, sink_mfa) do
     bridge_config = Keyword.get(opts, :bridge_config)
     credentials = bridge_credentials(bridge_config)
+    binding = Keyword.fetch!(opts, :binding)
+
+    captured =
+      Keyword.take(binding.options, [:account, :endpoint, :executable, :config_path, :req_options])
 
     [
       bridge_id: bridge_id,
+      binding: binding,
       sink_mfa: sink_mfa,
       sink_opts: [bridge_id: bridge_id],
       receiver:
         Keyword.get(opts, :receiver) ||
           map_get(ingress, [:receiver, "receiver"]) ||
           default_polling_receiver(ingress),
-      receiver_opts: receiver_opts(ingress, credentials),
+      receiver_opts: Keyword.merge(captured, receiver_opts(ingress, credentials)),
       poll_interval_ms: map_get(ingress, [:poll_interval_ms, "poll_interval_ms"]) || 1_000,
       max_backoff_ms: map_get(ingress, [:max_backoff_ms, "max_backoff_ms"]) || 10_000
     ]

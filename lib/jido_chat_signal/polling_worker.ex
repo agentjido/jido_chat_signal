@@ -3,7 +3,7 @@ defmodule Jido.Chat.Signal.PollingWorker do
   Bridge-ingress polling worker for Signal receive transports.
 
   The worker drains pending Signal envelopes through a receiver module and emits
-  raw payloads via `sink_mfa` so host runtimes can route them through ingress.
+  complete typed deliveries via `sink_mfa` so host runtimes can route them through ingress.
   """
 
   use GenServer
@@ -14,13 +14,15 @@ defmodule Jido.Chat.Signal.PollingWorker do
 
   @type state :: %{
           bridge_id: String.t(),
+          binding: Jido.Chat.Binding.t(),
           sink_mfa: sink_mfa(),
           sink_opts: keyword(),
           receiver: module(),
           receiver_opts: keyword(),
           poll_interval_ms: pos_integer(),
           max_backoff_ms: pos_integer(),
-          backoff_ms: pos_integer()
+          backoff_ms: pos_integer(),
+          last_result: term()
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -36,13 +38,15 @@ defmodule Jido.Chat.Signal.PollingWorker do
 
     state = %{
       bridge_id: bridge_id,
+      binding: Keyword.fetch!(opts, :binding),
       sink_mfa: sink_mfa,
       sink_opts: Keyword.get(opts, :sink_opts, []),
       receiver: Keyword.get(opts, :receiver, CliClient),
       receiver_opts: Keyword.get(opts, :receiver_opts, []),
       poll_interval_ms: poll_interval_ms,
       max_backoff_ms: normalize_pos_integer(opts[:max_backoff_ms], 10_000),
-      backoff_ms: poll_interval_ms
+      backoff_ms: poll_interval_ms,
+      last_result: nil
     }
 
     send(self(), :poll)
@@ -56,17 +60,19 @@ defmodule Jido.Chat.Signal.PollingWorker do
         case emit_messages(messages, state) do
           :ok ->
             schedule_poll(state.poll_interval_ms)
-            {:noreply, %{state | backoff_ms: state.poll_interval_ms}}
 
-          {:error, _reason} ->
-            schedule_backoff(state)
+            {:noreply,
+             %{state | backoff_ms: state.poll_interval_ms, last_result: {:ok, length(messages)}}}
+
+          {:error, _reason} = error ->
+            schedule_backoff(%{state | last_result: error})
         end
 
       {:ok, _invalid} ->
-        schedule_backoff(state)
+        schedule_backoff(%{state | last_result: {:error, :invalid_receive_result}})
 
-      {:error, _reason} ->
-        schedule_backoff(state)
+      {:error, _reason} = error ->
+        schedule_backoff(%{state | last_result: error})
     end
   end
 
@@ -84,20 +90,24 @@ defmodule Jido.Chat.Signal.PollingWorker do
     end
   end
 
-  defp emit_message(state, message) when is_map(message) do
-    case invoke_sink(state.sink_mfa, message, state.sink_opts) do
-      {:ok, _result} -> :ok
-      :ok -> :ok
-      {:error, _reason} = error -> error
-      other -> {:error, {:invalid_sink_result, other}}
+  defp emit_message(state, message) do
+    with {:ok, delivery} <- Jido.Chat.normalize_event(state.binding, message) do
+      case invoke_sink(state.sink_mfa, delivery, state.sink_opts) do
+        {:ok, _result} -> :ok
+        :ok -> :ok
+        {:error, _reason} = error -> error
+        other -> {:error, {:invalid_sink_result, other}}
+      end
     end
   end
 
-  defp emit_message(_state, _message), do: {:error, :invalid_message_payload}
-
   defp invoke_sink({module, function, base_args}, payload, opts)
        when is_atom(module) and is_atom(function) and is_list(base_args) and is_list(opts) do
-    apply(module, function, base_args ++ [payload, Keyword.put(opts, :mode, :payload)])
+    apply(module, function, base_args ++ [payload, opts])
+  rescue
+    _ -> {:error, :sink_exception}
+  catch
+    _, _ -> {:error, :sink_exception}
   end
 
   defp invoke_sink(_sink_mfa, _payload, _opts), do: {:error, :invalid_sink_mfa}
