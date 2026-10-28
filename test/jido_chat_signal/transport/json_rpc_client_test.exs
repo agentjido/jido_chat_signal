@@ -1,7 +1,6 @@
 defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
   use ExUnit.Case, async: true
 
-  alias Jido.Chat.FileUpload
   alias Jido.Chat.Signal.Transport.JsonRpcClient
 
   defmodule StubAdapter do
@@ -134,13 +133,11 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
        %{Req.Response.json(%{"result" => %{"timestamp" => 1_776_000_000}}) | status: 200}}
     end
 
-    attachment =
-      FileUpload.new(%{
-        kind: :image,
-        data: "R0lGODlhAQABAAAAACw=",
-        filename: "tiny.gif",
-        media_type: "image/gif"
-      })
+    attachment = %{
+      data: "R0lGODlhAQABAAAAACw=",
+      filename: "tiny.gif",
+      media_type: "image/gif"
+    }
 
     assert {:ok, %{"timestamp" => 1_776_000_000}} =
              JsonRpcClient.send_message("+15555550100", "gif",

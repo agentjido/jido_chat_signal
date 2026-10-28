@@ -6,94 +6,56 @@ defmodule Jido.Chat.Signal.LiveIntegrationTest do
   @run_live System.get_env("RUN_LIVE_SIGNAL_TESTS") in ["1", "true", "TRUE", "yes"]
   @target System.get_env("SIGNAL_TEST_RECIPIENT")
 
-  if @run_live and @target not in [nil, ""] do
-    alias Jido.Chat.Signal.{Adapter, Transport.CliClient}
+  if not @run_live do
+    @moduletag skip: "set RUN_LIVE_SIGNAL_TESTS=true to run live Signal tests"
+  end
 
-    @transport_mode System.get_env("SIGNAL_TRANSPORT") || "cli"
+  if @run_live and @target in [nil, ""] do
+    raise "live Signal tests require SIGNAL_TEST_RECIPIENT"
+  end
 
-    test "sends a live Signal message through the configured signal-cli transport" do
-      text = "jido signal live #{System.system_time(:millisecond)}"
-      account = System.get_env("SIGNAL_ACCOUNT")
+  alias Jido.Chat.Client
+  alias Jido.Chat.Signal.{Adapter, Transport.CliClient, Transport.JsonRpcClient}
 
-      opts =
-        [
-          account: account
-        ]
-        |> transport_opts()
+  test "sends live Signal text and file requests through Jido Chat" do
+    text = "jido signal live #{System.system_time(:millisecond)}"
+    client = live_client()
 
-      assert {:ok, response} = Adapter.send_message(@target, text, opts)
-      assert response["id"]
+    assert {:ok, response} = Jido.Chat.send_text(client, @target, text)
+    assert response.data["result"]["id"]
 
-      file_path = live_attachment_path(text)
-      on_exit(fn -> File.rm(file_path) end)
+    source = %{
+      "content_base64" => Base.encode64(text <> "\n"),
+      "filename" => "jido-signal-live.txt"
+    }
 
-      assert {:ok, media_response} =
-               Adapter.send_file(
-                 @target,
-                 %{path: file_path, filename: Path.basename(file_path)},
-                 Keyword.put(opts, :caption, text <> " attachment")
-               )
+    assert {:ok, media_response} =
+             Jido.Chat.send_file(client, @target, source, caption: text <> " attachment")
 
-      assert media_response["id"]
+    assert media_response.data["result"]["id"]
 
-      assert {:ok, gif_response} =
-               Adapter.send_file(
-                 @target,
-                 live_gif(),
-                 Keyword.put(opts, :caption, text <> " gif")
-               )
+    assert {:ok, quote_response} =
+             Jido.Chat.send_text(client, @target, text <> " quote",
+               reply_to_id: response.data["result"]["id"]
+             )
 
-      assert gif_response["id"]
+    assert quote_response.data["result"]["id"]
+  end
 
-      if account not in [nil, ""] do
-        assert {:ok, quote_response} =
-                 Adapter.send_message(
-                   @target,
-                   text <> " quote",
-                   opts ++
-                     [
-                       reply_to_id: response["id"],
-                       quote_author: account,
-                       quote_message: text
-                     ]
-                 )
+  defp live_client do
+    transport =
+      if String.downcase(System.get_env("SIGNAL_TRANSPORT") || "cli") == "cli",
+        do: CliClient,
+        else: JsonRpcClient
 
-        assert quote_response["id"]
-      end
-    end
-
-    defp transport_opts(opts) do
-      case String.downcase(@transport_mode) do
-        "cli" ->
-          Keyword.put(opts, :transport, CliClient)
-
-        _json_rpc ->
-          Keyword.put(opts, :endpoint, System.get_env("SIGNAL_RPC_ENDPOINT"))
-      end
-    end
-
-    defp live_attachment_path(text) do
-      path =
-        Path.join(
-          System.tmp_dir!(),
-          "jido_signal_live_#{System.unique_integer([:positive])}.txt"
-        )
-
-      File.write!(path, text <> "\n")
-      path
-    end
-
-    defp live_gif do
-      %{
-        kind: :image,
-        data: "R0lGODlhCgAKAIAAAP8AAAAAACH5BAAAAAAALAAAAAAKAAoAAAIIhI+py+0PYysAOw==",
-        filename: "jido-signal-live.gif",
-        media_type: "image/gif"
-      }
-    end
-  else
-    test "live Signal tests require RUN_LIVE_SIGNAL_TESTS and SIGNAL_TEST_RECIPIENT" do
-      refute @run_live and @target not in [nil, ""]
-    end
+    Client.new!(Adapter,
+      id: "signal-live",
+      transport: transport,
+      credentials: %{account: System.get_env("SIGNAL_ACCOUNT")},
+      config: [
+        endpoint: System.get_env("SIGNAL_RPC_ENDPOINT"),
+        executable: System.get_env("SIGNAL_CLI_PATH") || "signal-cli"
+      ]
+    )
   end
 end

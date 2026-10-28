@@ -1,7 +1,6 @@
 defmodule Jido.Chat.Signal.Transport.CliClientTest do
   use ExUnit.Case, async: true
 
-  alias Jido.Chat.FileUpload
   alias Jido.Chat.Signal.Transport.CliClient
 
   test "builds signal-cli attachment and quote arguments" do
@@ -92,13 +91,11 @@ defmodule Jido.Chat.Signal.Transport.CliClientTest do
       end
     end)
 
-    attachment =
-      FileUpload.new(%{
-        kind: :image,
-        data: "R0lGODlhAQABAAAAACw=",
-        filename: "tiny.gif",
-        media_type: "image/gif"
-      })
+    attachment = %{
+      data: "R0lGODlhAQABAAAAACw=",
+      filename: "tiny.gif",
+      media_type: "image/gif"
+    }
 
     assert {:ok, _response} =
              CliClient.send_message("+15555550100", "gif",
