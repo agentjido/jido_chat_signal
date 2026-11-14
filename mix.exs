@@ -2,7 +2,7 @@ defmodule Jido.Chat.Signal.MixProject do
   use Mix.Project
 
   @version "1.0.0"
-  @jido_chat_ref "0b6f16d9b91b37c61f2ad913dcdd4adea1713f88"
+  @jido_chat_ref "7652b6d74c4fc8170149ae1cfd08f981cfb1ea27"
   @source_url "https://github.com/agentjido/jido_chat_signal"
   @description "Signal adapter package for Jido.Chat using signal-cli"
 
@@ -36,7 +36,7 @@ defmodule Jido.Chat.Signal.MixProject do
       chat_dependency(),
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
-      {:dotenvy, "~> 1.1", only: [:test]},
+      {:dotenvy, "~> 1.2"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.4", only: :dev, runtime: false},
       {:git_ops, "~> 2.9", only: :dev, runtime: false}
@@ -44,16 +44,7 @@ defmodule Jido.Chat.Signal.MixProject do
   end
 
   defp chat_dependency do
-    case {Mix.env(), System.get_env("JIDO_CHAT_PATH")} do
-      {env, path} when env in [:dev, :test] and is_binary(path) and path != "" ->
-        {:jido_chat, path: Path.expand(path, __DIR__), override: true}
-
-      {env, _path} when env in [:dev, :test] ->
-        {:jido_chat, github: "agentjido/jido_chat", ref: @jido_chat_ref, override: true}
-
-      _ ->
-        {:jido_chat, "~> 3.0.0-dev"}
-    end
+    {:jido_chat, github: "agentjido/jido_chat", ref: @jido_chat_ref}
   end
 
   defp aliases do
