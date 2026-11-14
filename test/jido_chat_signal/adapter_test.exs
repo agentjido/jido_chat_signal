@@ -3,6 +3,7 @@ defmodule Jido.Chat.Signal.AdapterTest do
 
   alias Jido.Chat.Client
   alias Jido.Chat.Signal.Adapter
+  alias Jido.Signal.Codec
 
   defmodule FakeTransport do
     @behaviour Jido.Chat.Signal.Transport
@@ -66,7 +67,7 @@ defmodule Jido.Chat.Signal.AdapterTest do
     assert signal.data["reply_to_id"] == "1775999999"
     assert [%{"kind" => "image", "resource_ref" => reference}] = signal.data["media"]
     assert reference["client_id"] == client.id
-    refute Jason.encode!(Jido.Signal.Codec.to_map(signal)) =~ "\"size\""
+    refute Jason.encode!(Codec.to_map(signal)) =~ "\"size\""
   end
 
   test "keeps stable ordered facts and reports invalid provider items", %{client: client} do

@@ -180,3 +180,25 @@ No live or paid provider calls ran. Live tests stayed excluded.
 Provider credentials, permissions, remote delivery, webhooks, sockets, and external service behavior remain untested.
 The current CI toolchain matrix was not reproduced locally. The verdict is self-checked.
 No Chat/core, Mattermost, Messaging, or workspace task-list file was changed.
+
+## Signal CI follow-up
+
+The first remote run for `b198bc9` failed strict Credo as well as Hex package validation.
+The [failed run](https://github.com/agentjido/jido_chat_signal/actions/runs/43613241046)
+reported a nested module alias issue at the new Codec call in the adapter test.
+The test now aliases `Jido.Signal.Codec`. Its assertion is unchanged.
+
+The earlier temporary copy inherited `/private/tmp/.credo.exs`, which ran only
+18 checks. It did not match the 69 default checks in CI. This follow-up uses
+an explicit empty configuration with `--config-file` to load all default rules
+and exclude the inherited temporary configuration. No repository gate was changed.
+
+The matching local command is:
+
+```text
+MIX_ENV=dev mix credo --strict --config-file /private/tmp/jido-chat-upgrade-20261114/signal-default-credo.exs
+```
+
+The configuration contains `%{configs: [%{name: "default"}]}`.
+The corrected source passes all 69 default Credo checks and the 15 non-live tests.
+Hex publication remains blocked by the pinned Chat Git dependency.
