@@ -5,31 +5,18 @@ defmodule Jido.Chat.Signal.Transport.CliClient do
   alias Jido.Chat.Signal.AttachmentRef
 
   @impl true
-  def send_message(target, text, opts) do
+  def send_message(account, target, text, opts) do
     executable =
       Keyword.get(opts, :executable) || System.get_env("SIGNAL_CLI_PATH") || "signal-cli"
 
     with {:ok, send_args} <- send_args(target, text, opts),
-         {:ok, output} <- run(executable, account_args(opts) ++ send_args) do
+         {:ok, output} <- run(executable, account_args(account, opts) ++ send_args) do
       {:ok,
        %{
          "timestamp" => timestamp_from_output(output) || System.system_time(:millisecond),
          "target" => to_string(target),
          "output" => output
        }}
-    end
-  end
-
-  @impl true
-  def list_groups(opts) do
-    executable =
-      Keyword.get(opts, :executable) || System.get_env("SIGNAL_CLI_PATH") || "signal-cli"
-
-    args = account_args(opts) ++ ["listGroups"]
-
-    case run(executable, args) do
-      {:ok, output} -> {:ok, [%{"raw" => output}]}
-      {:error, _reason} = error -> error
     end
   end
 
@@ -40,22 +27,21 @@ defmodule Jido.Chat.Signal.Transport.CliClient do
   versions may emit either a JSON list or line-delimited JSON objects, so parsing
   accepts both formats.
   """
-  @spec receive_messages(keyword()) :: {:ok, [map()]} | {:error, term()}
+  @spec receive_messages(String.t() | nil, keyword()) :: {:ok, [map()]} | {:error, term()}
   @impl true
-  def receive_messages(opts \\ []) do
+  def receive_messages(account, opts \\ []) do
     executable =
       Keyword.get(opts, :executable) || System.get_env("SIGNAL_CLI_PATH") || "signal-cli"
 
-    args = account_args(opts) ++ ["-o", "json", "receive"] ++ receive_args(opts)
+    args = account_args(account, opts) ++ ["-o", "json", "receive"] ++ receive_args(opts)
 
     with {:ok, output} <- run(executable, args) do
       decode_receive_output(output)
     end
   end
 
-  defp account_args(opts) do
+  defp account_args(account, opts) do
     config_path = Keyword.get(opts, :config_path) || Keyword.get(opts, :config)
-    account = Keyword.get(opts, :account) || System.get_env("SIGNAL_ACCOUNT")
 
     []
     |> maybe_global_arg("-c", config_path)
@@ -189,16 +175,26 @@ defmodule Jido.Chat.Signal.Transport.CliClient do
   end
 
   defp decode_json_lines(output) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.filter(&json_candidate?/1)
-    |> Enum.reduce_while({:ok, []}, fn line, {:ok, acc} ->
-      case Jason.decode(line) do
-        {:ok, decoded} -> {:cont, {:ok, acc ++ normalize_decoded_messages(decoded)}}
-        {:error, reason} -> {:halt, {:error, {:invalid_receive_output, reason, line}}}
-      end
-    end)
+    result =
+      output
+      |> String.split("\n", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.filter(&json_candidate?/1)
+      |> Enum.reduce_while({:ok, []}, fn line, {:ok, acc} ->
+        case Jason.decode(line) do
+          {:ok, decoded} ->
+            items = normalize_decoded_messages(decoded)
+            {:cont, {:ok, Enum.reverse(items, acc)}}
+
+          {:error, reason} ->
+            {:halt, {:error, {:invalid_receive_output, reason, line}}}
+        end
+      end)
+
+    case result do
+      {:ok, messages} -> {:ok, Enum.reverse(messages)}
+      error -> error
+    end
   end
 
   defp json_candidate?(""), do: false

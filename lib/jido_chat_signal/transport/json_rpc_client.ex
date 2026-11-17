@@ -5,28 +5,23 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClient do
   alias Jido.Chat.Signal.AttachmentRef
 
   @impl true
-  def send_message(target, text, opts) do
+  def send_message(account, target, text, opts) do
     with {:ok, params} <-
            target
            |> send_params(text)
            |> maybe_put_attachments(opts) do
       params
       |> maybe_put_quote(target, opts)
-      |> maybe_put_account(opts)
+      |> maybe_put_account(account)
       |> then(&rpc("send", &1, opts))
     end
   end
 
   @impl true
-  def list_groups(opts) do
-    rpc("listGroups", maybe_put_account(%{}, opts), opts)
-  end
-
-  @impl true
-  def receive_messages(opts \\ []) do
+  def receive_messages(account, opts \\ []) do
     params =
       %{}
-      |> maybe_put_account(opts)
+      |> maybe_put_account(account)
       |> maybe_put_receive_timeout(opts)
       |> maybe_put_max_messages(opts)
 
@@ -84,8 +79,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClient do
 
   defp maybe_put_req_receive_timeout(req_opts, _method, _params, _opts), do: req_opts
 
-  defp maybe_put_account(params, opts) do
-    account = Keyword.get(opts, :account) || System.get_env("SIGNAL_ACCOUNT")
+  defp maybe_put_account(params, account) do
     if account in [nil, ""], do: params, else: Map.put(params, "account", account)
   end
 

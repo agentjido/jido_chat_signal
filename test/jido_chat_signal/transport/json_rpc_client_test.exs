@@ -41,8 +41,8 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
 
     assert {:ok, [payload]} =
              JsonRpcClient.receive_messages(
+               "+15555550101",
                endpoint: "http://signal.test/api/v1/rpc",
-               account: "+15555550101",
                receive_timeout_s: 2,
                max_messages: 5,
                req_options: request_options(adapter)
@@ -69,6 +69,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
 
     assert {:ok, []} =
              JsonRpcClient.receive_messages(
+               nil,
                endpoint: "http://signal.test/api/v1/rpc",
                receive_timeout_s: 30,
                http_receive_timeout_ms: 2_000,
@@ -95,6 +96,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
 
     assert {:ok, [%{"receiptMessage" => %{}}, nil]} =
              JsonRpcClient.receive_messages(
+               nil,
                endpoint: "http://signal.test/api/v1/rpc",
                req_options: request_options(adapter)
              )
@@ -117,6 +119,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
     assert {:error,
             {:signal_rpc_error, 200, %{"code" => -32_000, "message" => "already receiving"}}} =
              JsonRpcClient.receive_messages(
+               nil,
                endpoint: "http://signal.test/api/v1/rpc",
                req_options: request_options(adapter)
              )
@@ -140,7 +143,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
     }
 
     assert {:ok, %{"timestamp" => 1_776_000_000}} =
-             JsonRpcClient.send_message("+15555550100", "gif",
+             JsonRpcClient.send_message(nil, "+15555550100", "gif",
                endpoint: "http://signal.test/api/v1/rpc",
                attachments: [%{path: "/tmp/report.txt"}, attachment],
                req_options: request_options(adapter)
@@ -156,7 +159,7 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
 
   test "rejects remote attachments before JSON-RPC send" do
     assert {:error, {:unsupported_remote_attachment, "https://example.test/file.txt"}} =
-             JsonRpcClient.send_message("+15555550100", "file",
+             JsonRpcClient.send_message(nil, "+15555550100", "file",
                endpoint: "http://signal.test/api/v1/rpc",
                attachments: [%{url: "https://example.test/file.txt"}],
                req_options: [
@@ -164,6 +167,95 @@ defmodule Jido.Chat.Signal.Transport.JsonRpcClientTest do
                    flunk("unexpected JSON-RPC request: #{inspect(request)}")
                  end
                ]
+             )
+  end
+
+  test "sends group replies with explicit account identity" do
+    test_pid = self()
+
+    adapter = fn request ->
+      body = Jason.decode!(request.body)
+      send(test_pid, {:rpc_send_body, body})
+      {request, %{Req.Response.json(%{"result" => %{"timestamp" => 1}}) | status: 200}}
+    end
+
+    assert {:ok, _} =
+             JsonRpcClient.send_message("+15555550101", "group:group-1", "reply",
+               endpoint: "http://signal.test/api/v1/rpc",
+               reply_to_id: "10",
+               req_options: request_options(adapter)
+             )
+
+    assert_received {:rpc_send_body, body}
+    assert body["params"]["account"] == "+15555550101"
+    assert body["params"]["groupId"] == "group-1"
+    assert body["params"]["quoteTimestamp"] == "10"
+    assert body["params"]["quoteAuthor"] == "group:group-1"
+    refute Map.has_key?(body["params"], "attachments")
+
+    assert {:ok, _} =
+             JsonRpcClient.send_message(nil, "+15555550100", "reply",
+               endpoint: "http://signal.test/api/v1/rpc",
+               reply_to_id: "11",
+               quote_message: "parent",
+               req_options: request_options(adapter)
+             )
+
+    assert_received {:rpc_send_body, body}
+    assert body["params"]["quoteMessage"] == "parent"
+  end
+
+  test "normalizes nil and single receive results with string limits" do
+    test_pid = self()
+
+    nil_adapter = fn request ->
+      body = Jason.decode!(request.body)
+      send(test_pid, {:rpc_receive_body, body, request.options})
+      {request, %{Req.Response.json(%{"result" => nil}) | status: 200}}
+    end
+
+    assert {:ok, []} =
+             JsonRpcClient.receive_messages(nil,
+               endpoint: "http://signal.test/api/v1/rpc",
+               timeout_s: "2.5",
+               max_messages: "7",
+               req_options: request_options(nil_adapter)
+             )
+
+    assert_received {:rpc_receive_body, body, options}
+    assert body["params"] == %{"timeout" => 2.5, "maxMessages" => 7}
+    assert options.receive_timeout == 15_000
+
+    one_adapter = fn request ->
+      {request, %{Req.Response.json(%{"result" => %{"envelope" => %{}}}) | status: 200}}
+    end
+
+    assert {:ok, [%{"envelope" => %{}}]} =
+             JsonRpcClient.receive_messages(nil,
+               endpoint: "http://signal.test/api/v1/rpc",
+               req_options: request_options(one_adapter)
+             )
+  end
+
+  test "returns unexpected daemon responses and transport errors" do
+    unexpected = fn request ->
+      {request, %{Req.Response.json(%{"unexpected" => true}) | status: 503}}
+    end
+
+    assert {:error, {:signal_rpc_error, 503, %{"unexpected" => true}}} =
+             JsonRpcClient.receive_messages(nil,
+               endpoint: "http://signal.test/api/v1/rpc",
+               req_options: request_options(unexpected)
+             )
+
+    failed = fn request ->
+      {request, %Req.TransportError{reason: :timeout}}
+    end
+
+    assert {:error, %Req.TransportError{reason: :timeout}} =
+             JsonRpcClient.receive_messages(nil,
+               endpoint: "http://signal.test/api/v1/rpc",
+               req_options: request_options(failed)
              )
   end
 end

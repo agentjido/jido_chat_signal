@@ -5,31 +5,37 @@ defmodule Jido.Chat.Signal.Operations do
   alias Jido.Chat.Signal.{Adapter, AttachmentRef}
 
   def invoke(operation, %Client{adapter: Adapter} = client, request, opts) do
-    call(operation, client, request.data, Keyword.merge(Client.options(client), opts))
+    call(
+      operation,
+      client,
+      request.data,
+      client.credentials[:account],
+      Keyword.merge(client.config, opts)
+    )
   end
 
   def invoke(_, _, _, _), do: {:error, {:not_attempted, :unsupported}}
 
-  defp call(:send_message, client, data, opts) do
-    send_message(client, data["room_id"], data["text"], data, opts)
+  defp call(:send_message, client, data, account, opts) do
+    send_message(client, data["room_id"], data["text"], data, account, opts)
   end
 
-  defp call(:send_file, client, data, opts) do
+  defp call(:send_file, client, data, account, opts) do
     with {:ok, attachment} <- attachment(data["source"]),
          send_opts <- Keyword.put(opts, :attachments, [attachment]) do
-      send_message(client, data["room_id"], data["caption"] || "", data, send_opts)
+      send_message(client, data["room_id"], data["caption"] || "", data, account, send_opts)
     end
   end
 
-  defp call(_, _, _, _), do: {:error, {:not_attempted, :unsupported}}
+  defp call(_, _, _, _, _), do: {:error, {:not_attempted, :unsupported}}
 
-  defp send_message(client, room_id, text, data, opts) do
+  defp send_message(client, room_id, text, data, account, opts) do
     opts =
       opts
       |> optional(:reply_to_id, data["reply_to_id"])
       |> optional(:thread_id, data["thread_id"])
 
-    with {:ok, raw} <- client.transport.send_message(room_id, text, opts) do
+    with {:ok, raw} <- client.transport.send_message(account, room_id, text, opts) do
       result =
         %{
           "id" => identifier(field(raw, "timestamp") || field(raw, "id")),

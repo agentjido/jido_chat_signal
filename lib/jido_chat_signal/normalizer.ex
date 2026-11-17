@@ -24,15 +24,21 @@ defmodule Jido.Chat.Signal.Normalizer do
   def normalize(_, _), do: Policy.error(:invalid_delivery)
 
   defp facts(client, delivery_id, items) do
-    items
-    |> Enum.with_index()
-    |> Enum.reduce_while({:ok, []}, &append_fact(&1, &2, client, delivery_id))
+    result =
+      items
+      |> Enum.with_index()
+      |> Enum.reduce_while({:ok, []}, &append_fact(&1, &2, client, delivery_id))
+
+    case result do
+      {:ok, signals} -> {:ok, Enum.reverse(signals)}
+      error -> error
+    end
   end
 
   defp append_fact({item, index}, {:ok, acc}, client, delivery_id) do
     case fact(client, delivery_id, item) do
       {:ok, signal} ->
-        {:cont, {:ok, acc ++ [signal]}}
+        {:cont, {:ok, [signal | acc]}}
 
       {:error, %Jido.Chat.Errors.Contract{code: code}} = error when code in @limits ->
         {:halt, error}
@@ -44,7 +50,7 @@ defmodule Jido.Chat.Signal.Normalizer do
 
   defp append_failure(client, delivery_id, item, index, acc) do
     case failure(client, delivery_id, item, index) do
-      {:ok, signal} -> {:cont, {:ok, acc ++ [signal]}}
+      {:ok, signal} -> {:cont, {:ok, [signal | acc]}}
       error -> {:halt, error}
     end
   end

@@ -2,7 +2,6 @@ defmodule Jido.Chat.Signal.Source do
   @moduledoc "Receive-only Signal polling source for the shared Chat Sensor."
   @behaviour Jido.Chat.Sensor.Source
 
-  alias Jido.Chat.Client
   alias Jido.Chat.Signal
 
   @impl true
@@ -16,8 +15,15 @@ defmodule Jido.Chat.Signal.Source do
 
   @impl true
   def key(client, _opts) do
-    options = Client.options(client)
-    identity = {options[:account], options[:endpoint], options[:executable]}
+    identity =
+      {
+        client.transport,
+        client.credentials[:account],
+        client.config[:endpoint],
+        client.config[:executable],
+        client.config[:config_path] || client.config[:config]
+      }
+
     :crypto.hash(:sha256, :erlang.term_to_binary(identity, [:deterministic]))
   end
 
@@ -25,11 +31,11 @@ defmodule Jido.Chat.Signal.Source do
   def read(client, cursor, opts) do
     receiver = Keyword.get(opts, :receiver, client.transport)
 
-    private =
-      Client.options(client) |> Keyword.merge(Keyword.drop(opts, [:receiver, :poll_interval_ms]))
+    private = Keyword.merge(client.config, Keyword.drop(opts, [:receiver, :poll_interval_ms]))
 
-    with true <- function_exported?(receiver, :receive_messages, 1),
-         {:ok, messages} when is_list(messages) <- receiver.receive_messages(private),
+    with true <- function_exported?(receiver, :receive_messages, 2),
+         {:ok, messages} when is_list(messages) <-
+           receiver.receive_messages(client.credentials[:account], private),
          {:ok, delivery} <- Jido.Chat.normalize(client, messages) do
       next_cursor = if messages == [], do: cursor, else: delivery.id
       {:ok, delivery.signals, next_cursor}

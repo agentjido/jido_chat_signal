@@ -3,7 +3,6 @@ defmodule Jido.Chat.Signal.Adapter do
   use Jido.Chat.Adapter
 
   alias Jido.Chat.Operations.Definitions
-  alias Jido.Chat.Signal
   alias Jido.Chat.Signal.{Normalizer, Operations}
 
   @native [:send_message, :send_file]
@@ -15,7 +14,9 @@ defmodule Jido.Chat.Signal.Adapter do
   def default_transport, do: Jido.Chat.Signal.Transport.JsonRpcClient
 
   @impl true
-  def event_definitions, do: Signal.event_definitions()
+  def event_definitions do
+    [Jido.Chat.Signal.MessageReceived, Jido.Chat.Signal.NormalizationFailed]
+  end
 
   @impl true
   def capabilities do

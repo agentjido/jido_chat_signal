@@ -2,7 +2,6 @@ defmodule Jido.Chat.Signal.MixProject do
   use Mix.Project
 
   @version "1.0.0"
-  @jido_chat_ref "7652b6d74c4fc8170149ae1cfd08f981cfb1ea27"
   @source_url "https://github.com/agentjido/jido_chat_signal"
   @description "Signal adapter package for Jido.Chat using signal-cli"
 
@@ -26,14 +25,15 @@ defmodule Jido.Chat.Signal.MixProject do
 
   def application, do: [extra_applications: [:logger]]
 
-  def cli, do: [preferred_envs: [quality: :test, q: :test]]
+  def cli,
+    do: [preferred_envs: [quality: :test, q: :test, "test.contracts": :test]]
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
   defp deps do
     [
-      chat_dependency(),
+      {:jido_chat, path: "../jido_chat"},
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:dotenvy, "~> 1.2"},
@@ -43,25 +43,24 @@ defmodule Jido.Chat.Signal.MixProject do
     ]
   end
 
-  defp chat_dependency do
-    {:jido_chat, github: "agentjido/jido_chat", ref: @jido_chat_ref}
-  end
-
   defp aliases do
     [
       q: ["quality"],
+      "test.contracts": [
+        "test test/jido_chat_signal/adapter_test.exs test/jido_chat_signal/source_test.exs"
+      ],
       quality: [
         "format --check-formatted",
         "compile --warnings-as-errors",
         "credo --strict",
-        "test"
+        "test --cover"
       ]
     ]
   end
 
   defp package do
     [
-      files: ["lib", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "usage-rules.md"],
+      files: ["lib", "docs", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "usage-rules.md"],
       maintainers: ["Mike Hostetler"],
       licenses: ["Apache-2.0"],
       links: %{
@@ -81,7 +80,8 @@ defmodule Jido.Chat.Signal.MixProject do
       source_url: @source_url,
       extras: [
         "README.md",
-        "usage-rules.md"
+        "usage-rules.md",
+        "docs/v3-upgrade-validation.md"
       ]
     ]
   end

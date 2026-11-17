@@ -7,7 +7,5 @@ defmodule Jido.Chat.Signal do
   def adapter, do: Adapter
 
   @doc "Returns the incoming facts normalized by Signal."
-  def event_definitions do
-    [Jido.Chat.Signal.MessageReceived, Jido.Chat.Signal.NormalizationFailed]
-  end
+  defdelegate event_definitions, to: Adapter
 end
